@@ -71,6 +71,10 @@ functionality and may lead to unexpected behavior.'
     fi
 fi
 
+if [[ ! -f "composer.json" ]]; then
+  echo "{}" > composer.json
+fi
+
 mkdir -p .heroku/php
 
 export COMPOSER_HOME=$CACHE_DIR/.composer
@@ -193,6 +197,21 @@ http://devcenter.heroku.com/articles/php-support#custom-github-oauth-tokens"
 fi
 # no need for the token to stay around in the env
 unset COMPOSER_GITHUB_OAUTH_TOKEN
+
+# install dependencies
+#composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction | indent
+
+#composer show --installed heroku/heroku-buildpack-php &> /dev/null && error "Your composer.json requires package 'heroku/heroku-buildpack-php'.
+#This package may only be used as a dev dependency (in 'require-dev')!"
+
+status "Preparing runtime environment..."
+composer create-project heroku/heroku-buildpack-php $BUILD_DIR/vendor/heroku-buildpack-php -s dev --no-dev -n
+
+# Update the PATH
+#mkdir -p $BUILD_DIR/.profile.d
+#cat > $BUILD_DIR/.profile.d/php.sh <<"EOF"
+#export PATH="$HOME/.heroku/php/bin:$HOME/.heroku/php/sbin:$PATH"
+#EOF
 
 # Install Drush
 DRUSH_URL="https://github.com/drush-ops/drush/archive/$DRUSH_VERSION.tar.gz"
