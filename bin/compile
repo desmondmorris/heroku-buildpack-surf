@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# bin/compile <build-dir> <cache-dir> <env-dir>
+
 install_ext () {
     local ext=$1
     local reason=${2:-}
@@ -25,19 +27,29 @@ install_ext () {
     fi
 }
 
-set -e            # fail fast
-set -o pipefail   # don't ignore exit codes when piping output
-# set -x          # enable debugging
+# fail hard
+set -o pipefail
+# fail harder
+set -eu
+# move hidden files too, just in case
+shopt -s dotglob
 
-# Configure directories
+STACK=${STACK:-cedar} # Anvil has none
 BUILD_DIR=$1
-CACHE_DIR=$2
-ENV_DIR=$3
-
+CACHE_DIR=$2/php
+mkdir -p "$CACHE_DIR"
+ENV_DIR=${3:-} # Anvil has none
 BP_DIR=$(cd $(dirname $0); cd ..; pwd)
 
-PHP_VERSION=
-engine="php"
+# convenience functions
+source $BP_DIR/bin/common.sh
+
+export_env_dir "$ENV_DIR" '^[A-Z_][A-Z0-9_]*$' '^(HOME|PATH|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LD_LIBRARY_PATH|STACK)$'
+
+BUILDPACK_URL=${BUILDPACK_URL:-} # Anvil has none
+BUILDPACK_BRANCH=$(expr "$BUILDPACK_URL" : '^.*/heroku-buildpack-php#\(..*\)$' || expr "$BUILDPACK_URL" : '^.*/heroku-buildpack-php\.git#\(..*\)$' || true)
+BUILDPACK_BRANCH=${BUILDPACK_BRANCH:-master}
+BUILDPACK_OWNER=$(expr "$BUILDPACK_URL" : '^.*/\(..*\)/heroku-buildpack-php' || true)
 
 S3_URL="master"
 if [[ "$BUILDPACK_BRANCH" != v* && "$BUILDPACK_BRANCH" != "master" ]]; then
@@ -47,37 +59,49 @@ S3_URL="https://lang-php.s3.amazonaws.com/dist-${STACK}-${S3_URL}"
 
 cd $BUILD_DIR
 
-mkdir -p .heroku/php
-
-export COMPOSER_HOME=$CACHE_DIR/.composer
-mkdir -p $COMPOSER_HOME
-
-status "Installing system packages..."
-
-# we need to run things in here, set it up!
-ln -s $BUILD_DIR/.heroku /app/.heroku
-export PATH=/app/.heroku/php/bin:$PATH
-
-if [[ "${PHP_VERSION}" ]]; then
-    PHP_DIST_URL="$S3_URL/php-$PHP_VERSION.tar.gz"
-    echo "- PHP $PHP_VERSION" | indent
-    curl --silent --location "$PHP_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
-    PHP_EXT_DIR=$(php-config --extension-dir)
-    # update config files
-    mkdir -p $BUILD_DIR/.heroku/php/etc/php
-    cp $BP_DIR/conf/php/php.ini $BUILD_DIR/.heroku/php/etc/php
-    cp $BP_DIR/conf/php/php-fpm.conf $BUILD_DIR/.heroku/php/etc/php
-    mkdir -p $BUILD_DIR/.heroku/php/etc/php/conf.d
-    # remember the version for future upgrade handling
-    echo $PHP_VERSION > $CACHE_DIR/php_version
+if [[ -s "surf.json" ]]; then
+    cat surf.json | python -mjson.tool &> /dev/null || error "Could not parse surf.json; make sure it's valid!"
+else
+    if [[ ! -f "surf.json" ]]; then
+        error 'No surf.json found.
+Using index.php to declare PHP applications is considered legacy
+functionality and may lead to unexpected behavior.'
+    else
+        error 'Your surf.json is completely empty.'
+    fi
 fi
 
+#mkdir -p .heroku/php
+
+#export COMPOSER_HOME=$CACHE_DIR/.composer
+#mkdir -p $COMPOSER_HOME
+
+#status "Installing system packages..."
+
 # we need to run things in here, set it up!
-ln -s $BUILD_DIR/.heroku /app/.heroku
-export PATH=/app/.heroku/php/bin:$PATH
+#ln -s $BUILD_DIR/.heroku /app/.heroku
+#export PATH=/app/.heroku/php/bin:$PATH
+
+#if [[ "${PHP_VERSION}" ]]; then
+#    PHP_DIST_URL="$S3_URL/php-$PHP_VERSION.tar.gz"
+#    echo "- PHP $PHP_VERSION" | indent
+#    curl --silent --location "$PHP_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
+#    PHP_EXT_DIR=$(php-config --extension-dir)
+#    # update config files
+#    mkdir -p $BUILD_DIR/.heroku/php/etc/php
+#    cp $BP_DIR/conf/php/php.ini $BUILD_DIR/.heroku/php/etc/php
+#    cp $BP_DIR/conf/php/php-fpm.conf $BUILD_DIR/.heroku/php/etc/php
+#    mkdir -p $BUILD_DIR/.heroku/php/etc/php/conf.d
+#    # remember the version for future upgrade handling
+#    echo $PHP_VERSION > $CACHE_DIR/php_version
+#fi
+
+# we need to run things in here, set it up!
+#ln -s $BUILD_DIR/.heroku /app/.heroku
+#export PATH=/app/.heroku/php/bin:$PATH
 
 # Load some convenience functions like status(), echo(), and indent()
-source $bp_dir/bin/common.sh
+#source $bp_dir/bin/common.sh
 
 # Lets install composer
 
