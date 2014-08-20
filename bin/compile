@@ -195,5 +195,17 @@ fi
 unset COMPOSER_GITHUB_OAUTH_TOKEN
 
 # Install Drush
+DRUSH_URL="https://github.com/drush-ops/drush/archive/$DRUSH_VERSION.tar.gz"
+echo "- Drush $DRUSH_VERSION" | indent
+curl --silent --max-time 60 --location -L "$DRUSH_URL" | tar xz -C $BUILD_DIR/.heroku/php
+ln -s /app/.heroku/php/drush-5.11.0/drush /app/.heroku/php/bin/drush
+
+echo $DRUSH_VERSION > $CACHE_DIR/drush_version
+$(which drush) cc drush
 
 # Install Surf
+curl -s http://surf.drupal.build/install.sh | sh
+
+ls ~/.drush/surf
+
+$(which drush) surf-build
