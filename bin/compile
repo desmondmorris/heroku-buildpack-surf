@@ -107,39 +107,92 @@ cp $BP_DIR/conf/nginx/nginx.conf.default $BUILD_DIR/.heroku/php/etc/nginx/nginx.
 # remember the version for future upgrade handling
 echo $NGINX_VERSION > $CACHE_DIR/nginx_version
 
-#mkdir -p .heroku/php
+# handle extensions for PHP
+if [[ "${PHP_VERSION}" ]]; then
+    status "Installing PHP extensions..."
 
-#export COMPOSER_HOME=$CACHE_DIR/.composer
-#mkdir -p $COMPOSER_HOME
+    # the newrelic extension logs to stderr which pollutes our build output on each invocation of PHP, and the daemon it launches will prevent the build from finishing, so we disable it for the duration of this build (write to zzz-ext-newrelic.ini so the file is loaded last and overwrites the regular config). we can do this unconditionally here, no harm done if extension or add-on aren't enabled
+    echo "newrelic.enabled = 0
+    newrelic.loglevel = error
+    newrelic.daemon.dont_launch = 3
+    newrelic.daemon.loglevel = error" > "${BUILD_DIR}/.heroku/php/etc/php/conf.d/zzz-ext-newrelic.ini"
 
-#status "Installing system packages..."
+    exts=()
+    if [[ -f "composer.json" ]]; then
+        exts=($(cat composer.json | python -c 'from __future__ import print_function; import sys, json; { print(key[4:].lower()) for key in json.load(sys.stdin)["require"] if key.startswith("ext-")}' 2> /dev/null || true)) # convert to array
+    fi
+    for ext in "${!exts[@]}"; do # loop over keys in case the array is empty or else it'll error out
+        install_ext "${exts[$ext]}" "composer.json"
+    done
 
-# we need to run things in here, set it up!
-#ln -s $BUILD_DIR/.heroku /app/.heroku
-#export PATH=/app/.heroku/php/bin:$PATH
+    # special treatment for New Relic; we enable it if we detect a license key for it
+    # otherwise users would have to have it in their require section, which is annoying in development environments
+    NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY:-}
+    if [[ ( ${#exts[@]} -eq 0 || ! ${exts[*]} =~ "newrelic" ) && -n "$NEW_RELIC_LICENSE_KEY" ]]; then
+        install_ext "newrelic" "add-on detected"
+        exts+=("newrelic")
+    fi
 
-#if [[ "${PHP_VERSION}" ]]; then
-#    PHP_DIST_URL="$S3_URL/php-$PHP_VERSION.tar.gz"
-#    echo "- PHP $PHP_VERSION" | indent
-#    curl --silent --location "$PHP_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
-#    PHP_EXT_DIR=$(php-config --extension-dir)
-#    # update config files
-#    mkdir -p $BUILD_DIR/.heroku/php/etc/php
-#    cp $BP_DIR/conf/php/php.ini $BUILD_DIR/.heroku/php/etc/php
-#    cp $BP_DIR/conf/php/php-fpm.conf $BUILD_DIR/.heroku/php/etc/php
-#    mkdir -p $BUILD_DIR/.heroku/php/etc/php/conf.d
-#    # remember the version for future upgrade handling
-#    echo $PHP_VERSION > $CACHE_DIR/php_version
-#fi
+    if [[ ${#exts[@]} -eq 0 || ! ${exts[*]} =~ "zend-opcache" ]]; then
+        install_ext "zend-opcache" "automatic"
+        exts+=("zend-opcache")
+    fi
+fi
 
-# we need to run things in here, set it up!
-#ln -s $BUILD_DIR/.heroku /app/.heroku
-#export PATH=/app/.heroku/php/bin:$PATH
+status "Installing dependencies..."
 
-# Load some convenience functions like status(), echo(), and indent()
-#source $bp_dir/bin/common.sh
+# check if we should use a composer.phar version bundled with the project
+if [[ -f "composer.phar" ]]; then
+    php -r 'new Phar("composer.phar");' &> /dev/null || error "Found composer.phar in root directory, but it appears corrupted!"
+    composer() {
+        $engine composer.phar "$@"
+    }
+    export -f composer
+    composer --version 2>&1 | grep "^Composer version" > /dev/null || error "composer.phar in root directory doesn't seem to contain Composer!"
+    notice_inline "Using custom composer.phar (in root dir) to install dependencies."
+else
+    curl --silent --location "$S3_URL/composer.tar.gz" | tar xz -C $BUILD_DIR/.heroku/php
+    composer() {
+        $engine `which composer` "$@"
+    }
+    export -f composer
+    composer self-update --no-interaction --quiet # TODO: specify a version once composer has stable releases
+fi
+# echo composer version for info purposes
+# tail to get rid of outdated version warnings (Composer sends those to STDOUT instead of STDERR)
+composer --version 2> /dev/null | tail -n 1 | indent
 
-# Lets install composer
+# throw a notice if people have added their vendor dir to Git; that's bad practice and makes everything slow and cluttered
+if [[ -e "$(composer config vendor-dir)" ]]; then
+    warning "You have put Composer's vendor directory under version control.
+That directory should not be in your Git repository; only composer.json
+and composer.lock should be added, with Composer handling installation.
+Please 'git rm --cached $(composer config vendor-dir)/' to remove the folder from your index,
+then add '/$(composer config vendor-dir)/' to your '.gitignore' list to remove this notice.
+For more information, refer to the Composer FAQ: http://bit.ly/1rlCSZU"
+fi
+
+# handle custom oauth keys
+COMPOSER_GITHUB_OAUTH_TOKEN=${COMPOSER_GITHUB_OAUTH_TOKEN:-}
+if [[ -n "$COMPOSER_GITHUB_OAUTH_TOKEN" ]]; then
+    if curl --fail --silent -H "Authorization: token $COMPOSER_GITHUB_OAUTH_TOKEN" https://api.github.com/rate_limit > /dev/null; then
+        composer config -g github-oauth.github.com "$COMPOSER_GITHUB_OAUTH_TOKEN" &> /dev/null # redirect outdated version warnings (Composer sends those to STDOUT instead of STDERR)
+        notice_inline 'Using custom GitHub OAuth token in $COMPOSER_GITHUB_OAUTH_TOKEN'
+    else
+        error 'Invalid GitHub OAuth token in $COMPOSER_GITHUB_OAUTH_TOKEN'
+    fi
+else
+    # don't forget to remove any stored key if it's gone from the env
+    composer config -g --unset github-oauth.github.com &> /dev/null # redirect outdated version warnings (Composer sends those to STDOUT instead of STDERR)
+    if curl --silent https://api.github.com/rate_limit | python -c 'import sys, json; sys.exit((json.load(sys.stdin)["resources"]["core"]["remaining"] > 0))'; then # yes, check > 0, not < 1 - exit status of 0 will trigger the if
+        notice "You've reached the GitHub API's request rate limit.
+Composer will now try and fall back to slower downloads from source.
+It's strongly recommended you use a custom OAuth token; for details, see
+http://devcenter.heroku.com/articles/php-support#custom-github-oauth-tokens"
+    fi
+fi
+# no need for the token to stay around in the env
+unset COMPOSER_GITHUB_OAUTH_TOKEN
 
 # Install Drush
 
