@@ -102,6 +102,8 @@ if [[ "${PHP_VERSION}" ]]; then
     echo $PHP_VERSION > $CACHE_DIR/php_version
 fi
 
+which php
+
 NGINX_VERSION="1.6.0"
 NGINX_DIST_URL="$S3_URL/nginx-$NGINX_VERSION.tar.gz"
 echo "- Nginx $NGINX_VERSION" | indent
@@ -110,6 +112,12 @@ curl --silent --location "$NGINX_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
 cp $BP_DIR/conf/nginx/nginx.conf.default $BUILD_DIR/.heroku/php/etc/nginx/nginx.conf
 # remember the version for future upgrade handling
 echo $NGINX_VERSION > $CACHE_DIR/nginx_version
+
+# Install Drush
+DRUSH_URL="https://github.com/drush-ops/drush/archive/$DRUSH_VERSION.tar.gz"
+echo "- Drush $DRUSH_VERSION" | indent
+curl --silent --max-time 60 --location -L "$DRUSH_URL" | tar xz -C $BUILD_DIR/.heroku/php
+ln -s /app/.heroku/php/drush-5.11.0/drush /app/.heroku/php/bin/drush
 
 # handle extensions for PHP
 if [[ "${PHP_VERSION}" ]]; then
@@ -201,6 +209,9 @@ unset COMPOSER_GITHUB_OAUTH_TOKEN
 # install dependencies
 #composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction | indent
 
+composer require --dev "heroku/heroku-buildpack-php:*"
+composer require --dev "desmondmorris/surf:dev-master"
+
 #composer show --installed heroku/heroku-buildpack-php &> /dev/null && error "Your composer.json requires package 'heroku/heroku-buildpack-php'.
 #This package may only be used as a dev dependency (in 'require-dev')!"
 
@@ -208,16 +219,10 @@ status "Preparing runtime environment..."
 composer create-project heroku/heroku-buildpack-php $BUILD_DIR/vendor/heroku-buildpack-php -s dev --no-dev -n
 
 # Update the PATH
-#mkdir -p $BUILD_DIR/.profile.d
-#cat > $BUILD_DIR/.profile.d/php.sh <<"EOF"
-#export PATH="$HOME/.heroku/php/bin:$HOME/.heroku/php/sbin:$PATH"
-#EOF
-
-# Install Drush
-DRUSH_URL="https://github.com/drush-ops/drush/archive/$DRUSH_VERSION.tar.gz"
-echo "- Drush $DRUSH_VERSION" | indent
-curl --silent --max-time 60 --location -L "$DRUSH_URL" | tar xz -C $BUILD_DIR/.heroku/php
-ln -s /app/.heroku/php/drush-5.11.0/drush /app/.heroku/php/bin/drush
+mkdir -p $BUILD_DIR/.profile.d
+cat > $BUILD_DIR/.profile.d/php.sh <<"EOF"
+export PATH="$HOME/.heroku/php/bin:$HOME/.heroku/php/sbin:$PATH"
+EOF
 
 echo $DRUSH_VERSION > $CACHE_DIR/drush_version
 $(which drush) cc drush
@@ -227,3 +232,9 @@ echo "- Surf" | indent
 curl -s http://surf.drupal.build/install.sh | sh
 
 $(which drush) surf-build
+
+if [[ ! -f "Procfile" ]]; then
+    bindir=$(composer config bin-dir 2> /dev/null | tail -n 1) # tail, as composer echos outdated version warnings to STDOUT
+    echo "web: ~/vendor/heroku-buildpack-php/bin/heroku-php-nginx docroot/" > Procfile
+    echo "No Procfile, defaulting to 'web: ~/vendor/heroku-buildpack-php/bin/heroku-php-nginx docroot/'"
+fi
