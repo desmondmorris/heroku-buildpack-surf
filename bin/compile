@@ -86,7 +86,6 @@ export PATH=/app/.heroku/php/bin:$PATH
 
 if [[ "${PHP_VERSION}" ]]; then
     PHP_DIST_URL="$S3_URL/php-$PHP_VERSION.tar.gz"
-    echo $PHP_DIST_URL
     echo "- PHP $PHP_VERSION" | indent
     curl --silent --location "$PHP_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
     PHP_EXT_DIR=$(php-config --extension-dir)
@@ -98,6 +97,15 @@ if [[ "${PHP_VERSION}" ]]; then
     # remember the version for future upgrade handling
     echo $PHP_VERSION > $CACHE_DIR/php_version
 fi
+
+NGINX_VERSION="1.6.0"
+NGINX_DIST_URL="$S3_URL/nginx-$NGINX_VERSION.tar.gz"
+echo "- Nginx $NGINX_VERSION" | indent
+curl --silent --location "$NGINX_DIST_URL" | tar xz -C $BUILD_DIR/.heroku/php
+# nginx; copy in our config
+cp $BP_DIR/conf/nginx/nginx.conf.default $BUILD_DIR/.heroku/php/etc/nginx/nginx.conf
+# remember the version for future upgrade handling
+echo $NGINX_VERSION > $CACHE_DIR/nginx_version
 
 #mkdir -p .heroku/php
 
