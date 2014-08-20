@@ -102,8 +102,6 @@ if [[ "${PHP_VERSION}" ]]; then
     echo $PHP_VERSION > $CACHE_DIR/php_version
 fi
 
-which php
-
 NGINX_VERSION="1.6.0"
 NGINX_DIST_URL="$S3_URL/nginx-$NGINX_VERSION.tar.gz"
 echo "- Nginx $NGINX_VERSION" | indent
@@ -118,6 +116,8 @@ DRUSH_URL="https://github.com/drush-ops/drush/archive/$DRUSH_VERSION.tar.gz"
 echo "- Drush $DRUSH_VERSION" | indent
 curl --silent --max-time 60 --location -L "$DRUSH_URL" | tar xz -C $BUILD_DIR/.heroku/php
 ln -s /app/.heroku/php/drush-5.11.0/drush /app/.heroku/php/bin/drush
+echo $DRUSH_VERSION > $CACHE_DIR/drush_version
+$(which drush) cc drush
 
 # handle extensions for PHP
 if [[ "${PHP_VERSION}" ]]; then
@@ -212,6 +212,8 @@ unset COMPOSER_GITHUB_OAUTH_TOKEN
 composer require --dev "heroku/heroku-buildpack-php:*"
 composer require --dev "desmondmorris/surf:dev-master"
 
+ln -s ~/vendor/surf ~/.drush/surf
+
 #composer show --installed heroku/heroku-buildpack-php &> /dev/null && error "Your composer.json requires package 'heroku/heroku-buildpack-php'.
 #This package may only be used as a dev dependency (in 'require-dev')!"
 
@@ -223,9 +225,6 @@ mkdir -p $BUILD_DIR/.profile.d
 cat > $BUILD_DIR/.profile.d/php.sh <<"EOF"
 export PATH="$HOME/.heroku/php/bin:$HOME/.heroku/php/sbin:$PATH"
 EOF
-
-echo $DRUSH_VERSION > $CACHE_DIR/drush_version
-$(which drush) cc drush
 
 # Install Surf
 echo "- Surf" | indent
