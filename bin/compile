@@ -204,8 +204,7 @@ echo $DRUSH_VERSION > $CACHE_DIR/drush_version
 $(which drush) cc drush
 
 # Install Surf
+echo "- Surf" | indent
 curl -s http://surf.drupal.build/install.sh | sh
-
-ls ~/.drush/surf
 
 $(which drush) surf-build
